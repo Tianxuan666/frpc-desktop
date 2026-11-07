@@ -170,6 +170,71 @@ fn arg_tunnel_name(args: &Option<Value>) -> Result<Option<String>, ApiResponse<V
     }
 }
 
+#[derive(serde::Deserialize)]
+struct FrpcImportDoc {
+    #[serde(default)]
+    proxies: Vec<FrpcProxy>,
+    #[serde(default)]
+    visitors: Vec<FrpcProxy>,
+}
+
+/// Restores an exported frpc.toml (server settings + `[[proxies]]` +
+/// `[[visitors]]`) into the given tunnel. App-managed fields that the
+/// export does not carry (selected frpc version, custom frpc path,
+/// desktop system settings) are preserved from the current config.
+fn import_toml(
+    state: &AppState,
+    tunnel_id: &str,
+    content: &str,
+) -> Result<(usize, usize), String> {
+    let server: OpenSourceFrpcDesktopServer = toml::from_str(content)
+        .map_err(|e| format!("Failed to parse TOML: {}", e))?;
+    let doc: FrpcImportDoc =
+        toml::from_str(content).map_err(|e| format!("Failed to parse TOML: {}", e))?;
+
+    let conn = state.db.conn();
+    let existing = ServerRepository::get_server_config(&conn, tunnel_id)
+        .map_err(|e| format!("Failed to load current config: {}", e))?;
+
+    let mut imported = server;
+    imported.id = tunnel_id.to_string();
+    imported.frpc_version = existing.frpc_version;
+    imported.custom_frc_path = existing.custom_frc_path;
+    imported.system = existing.system;
+    if imported.metadatas.is_empty() {
+        imported.metadatas = existing.metadatas;
+    }
+    ServerRepository::save_server_config(&conn, &imported)
+        .map_err(|e| format!("Failed to save server config: {}", e))?;
+
+    let mut proxies_imported = 0usize;
+    for mut proxy in doc.proxies {
+        proxy.id = String::new();
+        proxy.server_id = tunnel_id.to_string();
+        // Entries under [[proxies]] are regular proxies (STCP/XTCP/SUDP
+        // providers); clearing the visitors model keeps them out of the
+        // generated [[visitors]] section.
+        proxy.visitors_model = String::new();
+        let name = proxy.name.clone();
+        ProxyRepository::create_proxy(&conn, proxy)
+            .map_err(|e| format!("Failed to import proxy \"{}\": {}", name, e))?;
+        proxies_imported += 1;
+    }
+
+    let mut visitors_imported = 0usize;
+    for mut proxy in doc.visitors {
+        proxy.id = String::new();
+        proxy.server_id = tunnel_id.to_string();
+        proxy.visitors_model = "visitors".to_string();
+        let name = proxy.name.clone();
+        ProxyRepository::create_proxy(&conn, proxy)
+            .map_err(|e| format!("Failed to import visitor \"{}\": {}", name, e))?;
+        visitors_imported += 1;
+    }
+
+    Ok((proxies_imported, visitors_imported))
+}
+
 macro_rules! tunnel_id_or_return {
     ($args:expr) => {
         match arg_tunnel_id(&$args) {
@@ -296,19 +361,30 @@ async fn handle_ipc_send(
             }
         }
         "server/importTomlConfig" => {
+            let tunnel_id = tunnel_id_or_return!(args);
             if let Some(path_buf) = rfd::FileDialog::new()
                 .add_filter("TOML Config", &["toml"])
                 .pick_file()
             {
-                match fs::read_to_string(&path_buf) {
-                    Ok(_content) => {
-                        // Import TOML
+                let content = match fs::read_to_string(&path_buf) {
+                    Ok(c) => c,
+                    Err(e) => {
+                        return ApiResponse::internal_error(format!(
+                            "Failed to read file: {}",
+                            e
+                        ));
+                    }
+                };
+                match import_toml(state, &tunnel_id, &content) {
+                    Ok((proxies_imported, visitors_imported)) => {
                         ApiResponse::success(serde_json::json!({
                             "canceled": false,
-                            "path": path_buf.to_string_lossy()
+                            "path": path_buf.to_string_lossy(),
+                            "proxiesImported": proxies_imported,
+                            "visitorsImported": visitors_imported
                         }))
                     }
-                    Err(e) => ApiResponse::internal_error(format!("Failed to read file: {}", e)),
+                    Err(e) => ApiResponse::fail("B1000", e),
                 }
             } else {
                 ApiResponse::success(serde_json::json!({
