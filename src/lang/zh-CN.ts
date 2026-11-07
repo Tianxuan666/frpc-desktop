@@ -445,7 +445,8 @@ export default {
       },
       importTomlConfigSuccess: {
         title: "提示",
-        message: "🎉 恭喜你，导入成功 请重启软件",
+        message:
+          "🎉 导入成功：{{proxies}} 个代理、{{visitors}} 个访问器，已保存到当前实例，请重启软件",
         confirm: "立即重启"
       },
       multiuserAlert: {
