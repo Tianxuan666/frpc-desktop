@@ -451,7 +451,7 @@ export default {
       importTomlConfigSuccess: {
         title: "Prompt",
         message:
-          "🎉 Congratulations, import successfully, please restart the software",
+          "🎉 Imported {{proxies}} proxies and {{visitors}} visitors into the current instance. Please restart the software",
         confirm: "Restart Now"
       },
       multiuserAlert: {
