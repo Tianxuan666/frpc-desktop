@@ -99,7 +99,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, windows-2022, macos-latest]
+        os: [windows-2022]  # 仅 Windows（用户需求：只出 PC 版）
     steps:
       - name: Checkout
         uses: actions/checkout@v4
