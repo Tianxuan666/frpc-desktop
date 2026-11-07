@@ -199,7 +199,7 @@ fn import_toml(
     let mut imported = server;
     imported.id = tunnel_id.to_string();
     imported.frpc_version = existing.frpc_version;
-    imported.custom_frc_path = existing.custom_frc_path;
+    imported.custom_frpc_path = existing.custom_frpc_path;
     imported.system = existing.system;
     if imported.metadatas.is_empty() {
         imported.metadatas = existing.metadatas;
