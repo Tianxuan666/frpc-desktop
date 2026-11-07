@@ -207,15 +207,38 @@ fn import_toml(
     ServerRepository::save_server_config(&conn, &imported)
         .map_err(|e| format!("Failed to save server config: {}", e))?;
 
+    // De-duplicate: load this tunnel's existing rows grouped by (name, model).
+    // Re-importing the same TOML reuses the existing row (upsert, status kept)
+    // instead of inserting a duplicate, and collapses any duplicate rows that
+    // earlier imports may have created.
+    let existing_rows = ProxyRepository::get_proxies_by_server(&conn, tunnel_id)
+        .map_err(|e| format!("Failed to load existing proxies: {}", e))?;
+    let mut groups: std::collections::HashMap<(String, &str), Vec<FrpcProxy>> =
+        std::collections::HashMap::new();
+    for row in existing_rows {
+        let model: &str = if row.visitors_model == "visitors" { "visitors" } else { "proxy" };
+        groups.entry((row.name.clone(), model)).or_default().push(row);
+    }
+
     let mut proxies_imported = 0usize;
     for mut proxy in doc.proxies {
-        proxy.id = String::new();
         proxy.server_id = tunnel_id.to_string();
         // Entries under [[proxies]] are regular proxies (STCP/XTCP/SUDP
         // providers); clearing the visitors model keeps them out of the
         // generated [[visitors]] section.
         proxy.visitors_model = String::new();
         let name = proxy.name.clone();
+        if let Some(rows) = groups.remove(&(name.clone(), "proxy")) {
+            // Same name already exists: update in place, drop extra duplicates.
+            proxy.id = rows[0].id.clone();
+            proxy.status = rows[0].status;
+            for extra in rows.into_iter().skip(1) {
+                ProxyRepository::delete_proxy(&conn, &extra.id)
+                    .map_err(|e| format!("Failed to clean up duplicate proxy \"{}\": {}", name, e))?;
+            }
+        } else {
+            proxy.id = String::new();
+        }
         ProxyRepository::create_proxy(&conn, proxy)
             .map_err(|e| format!("Failed to import proxy \"{}\": {}", name, e))?;
         proxies_imported += 1;
@@ -223,10 +246,19 @@ fn import_toml(
 
     let mut visitors_imported = 0usize;
     for mut proxy in doc.visitors {
-        proxy.id = String::new();
         proxy.server_id = tunnel_id.to_string();
         proxy.visitors_model = "visitors".to_string();
         let name = proxy.name.clone();
+        if let Some(rows) = groups.remove(&(name.clone(), "visitors")) {
+            proxy.id = rows[0].id.clone();
+            proxy.status = rows[0].status;
+            for extra in rows.into_iter().skip(1) {
+                ProxyRepository::delete_proxy(&conn, &extra.id)
+                    .map_err(|e| format!("Failed to clean up duplicate visitor \"{}\": {}", name, e))?;
+            }
+        } else {
+            proxy.id = String::new();
+        }
         ProxyRepository::create_proxy(&conn, proxy)
             .map_err(|e| format!("Failed to import visitor \"{}\": {}", name, e))?;
         visitors_imported += 1;
