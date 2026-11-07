@@ -516,8 +516,10 @@ onMounted(() => {
 
   listenerCleanups.push(
     on(ipcRouters.SERVER.importTomlConfig, data => {
-      const { canceled, path } = data;
+      const { canceled } = data;
       if (!canceled) {
+        const proxiesImported = data?.proxiesImported ?? 0;
+        const visitorsImported = data?.visitorsImported ?? 0;
         // 礼花
         confetti({
           zIndex: 12002,
@@ -526,7 +528,10 @@ onMounted(() => {
           origin: { y: 0.6 }
         });
         ElMessageBox.alert(
-          t("config.alert.importTomlConfigSuccess.message"),
+          t("config.alert.importTomlConfigSuccess.message", {
+            proxies: proxiesImported,
+            visitors: visitorsImported
+          }),
           t("config.alert.importTomlConfigSuccess.title"),
           {
             closeOnClickModal: false,
@@ -680,7 +685,9 @@ const handleExportConfig = useDebounceFn(() => {
 }, 300);
 
 const handleImportConfig = () => {
-  send(ipcRouters.SERVER.importTomlConfig);
+  send(ipcRouters.SERVER.importTomlConfig, {
+    tunnelId: tunnelStore.currentTunnelId
+  });
 };
 
 onUnmounted(() => {
